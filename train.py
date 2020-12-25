@@ -1,15 +1,17 @@
+import argparse
+import statistics as stats
+from pathlib import Path
+
 import torch
-from models import Encoder, GlobalDiscriminator, LocalDiscriminator, PriorDiscriminator
-from torchvision.datasets.cifar import CIFAR10
-from torch.utils.data import DataLoader
-from torchvision.transforms import ToTensor
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.optim import Adam
+from torch.utils.data import DataLoader
+from torchvision.datasets.cifar import CIFAR10
+from torchvision.transforms import ToTensor
 from tqdm import tqdm
-from pathlib import Path
-import statistics as stats
-import argparse
+
+from models import Encoder, GlobalDiscriminator, LocalDiscriminator, PriorDiscriminator
 
 
 class DeepInfoMaxLoss(nn.Module):
@@ -23,11 +25,10 @@ class DeepInfoMaxLoss(nn.Module):
         self.gamma = gamma
 
     def forward(self, y, M, M_prime):
-
         # see appendix 1A of https://arxiv.org/pdf/1808.06670.pdf
 
-        y_exp = y.unsqueeze(-1).unsqueeze(-1)
-        y_exp = y_exp.expand(-1, -1, 26, 26)
+        y_exp = y[..., None, None].expand(-1, -1, 26, 26)
+        # y_exp = y_exp.expand(-1, -1, 26, 26)
 
         y_M = torch.cat((M, y_exp), dim=1)
         y_M_prime = torch.cat((M_prime, y_exp), dim=1)
@@ -52,7 +53,7 @@ class DeepInfoMaxLoss(nn.Module):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='DeepInfomax pytorch')
-    parser.add_argument('--batch_size', default=64, type=int, help='batch_size')
+    parser.add_argument('--batch_size', default=128, type=int, help='batch_size')
     args = parser.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -61,25 +62,25 @@ if __name__ == '__main__':
     # image size 3, 32, 32
     # batch size must be an even number
     # shuffle must be True
-    cifar_10_train_dt = CIFAR10(r'c:\data\tv',  download=True, transform=ToTensor())
+    cifar_10_train_dt = CIFAR10("./data", download=True, transform=ToTensor())
     cifar_10_train_l = DataLoader(cifar_10_train_dt, batch_size=batch_size, shuffle=True, drop_last=True,
-                                  pin_memory=torch.cuda.is_available())
+                                  pin_memory=torch.cuda.is_available(), num_workers=8)
 
     encoder = Encoder().to(device)
     loss_fn = DeepInfoMaxLoss().to(device)
-    optim = Adam(encoder.parameters(), lr=1e-4)
-    loss_optim = Adam(loss_fn.parameters(), lr=1e-4)
+    optim = Adam(encoder.parameters(), lr=5e-4)
+    loss_optim = Adam(loss_fn.parameters(), lr=5e-4)
 
-    epoch_restart = 860
-    root = Path(r'c:\data\deepinfomax\models\run5')
+    epoch_restart = None
+    root = Path(r'./run')
 
-    if epoch_restart is not None and root is not None:
+    if epoch_restart is not None:
         enc_file = root / Path('encoder' + str(epoch_restart) + '.wgt')
         loss_file = root / Path('loss' + str(epoch_restart) + '.wgt')
         encoder.load_state_dict(torch.load(str(enc_file)))
         loss_fn.load_state_dict(torch.load(str(loss_file)))
 
-    for epoch in range(epoch_restart + 1, 1000):
+    for epoch in range((epoch_restart or 0) + 1, 1000):
         batch = tqdm(cifar_10_train_l, total=len(cifar_10_train_dt) // batch_size)
         train_loss = []
         for x, target in batch:
@@ -98,7 +99,6 @@ if __name__ == '__main__':
             loss_optim.step()
 
         if epoch % 10 == 0:
-            root = Path(r'c:\data\deepinfomax\models\run5')
             enc_file = root / Path('encoder' + str(epoch) + '.wgt')
             loss_file = root / Path('loss' + str(epoch) + '.wgt')
             enc_file.parent.mkdir(parents=True, exist_ok=True)
